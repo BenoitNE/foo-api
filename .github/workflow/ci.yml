@@ -1,0 +1,162 @@
+# .github/workflows/ci.yml
+
+name: Foo API CI Pipeline
+
+# Déclencheurs du workflow
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  # --- Job: Build ---
+  # Ce job compile le code et télécharge les dépendances.
+  build:
+    name: Build Application
+    runs-on: ubuntu-latest # Utiliser la dernière version d'Ubuntu disponible sur GitHub Actions
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4 # Action pour récupérer le code du dépôt
+
+      - name: Set up JDK 24 (Eclipse Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '24'
+          distribution: 'temurin'
+
+      - name: Cache Maven packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository # Chemin du cache des dépendances Maven
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }} # Clé de cache basée sur le SE et le pom.xml
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Compile with Maven
+        run: ./mvnw -B compile --file pom.xml # -B pour le mode batch
+
+  # --- Job: Test ---
+  # Ce job exécute les tests unitaires, d'intégration et d'architecture.
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: build # Ce job dépend de la réussite du job 'build'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 24 (Eclipse Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '24'
+          distribution: 'temurin'
+
+      - name: Cache Maven packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Run tests with Maven
+        run: ./mvnw -B test --file pom.xml
+
+      - name: Upload test reports
+        if: always() # Exécuter cette étape même si les tests échouent, pour avoir les rapports
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            target/surefire-reports/
+            target/failsafe-reports/
+          retention-days: 7 # Conserver les artefacts pendant 7 jours
+
+      - name: Upload JaCoCo coverage report (optional)
+        if: success() # Exécuter seulement si les tests réussissent
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-coverage-report
+          path: target/site/jacoco/
+          retention-days: 7
+
+  # --- Job: Package Docker Image ---
+  # Ce job construit l'image Docker et la pousse vers GitHub Container Registry (GHCR)
+  package_docker_image:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: test # Ce job dépend de la réussite du job 'test'
+    # Exécuter ce job uniquement pour les push sur les branches main et develop
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    permissions:
+      contents: read # Nécessaire pour checkout
+      packages: write # Nécessaire pour pousser des images vers GHCR
+      # id-token: write # Si vous utilisez OIDC pour l'authentification à un cloud provider
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (for multi-platform builds, optional but good practice)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # Permet d'utiliser des fonctionnalités de build avancées
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }} # L'utilisateur qui a déclenché le workflow
+          password: ${{ secrets.GITHUB_TOKEN }} # GITHUB_TOKEN est automatiquement fourni par GitHub Actions
+
+      - name: Extract Docker metadata (tags, labels)
+        id: meta # ID de l'étape pour référencer ses outputs
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/foo-api # Remplacer par votre owner et nom de repo/image
+          tags: |
+            type=ref,event=branch  # tag avec le nom de la branche (ex: main, develop)
+            type=ref,event=pr     # tag avec le numéro de la PR (si push sur PR)
+            type=sha,prefix=       # tag avec le SHA court du commit (ex: a1b2c3d)
+            type=raw,value=latest,enable={{is_default_branch}} # tag 'latest' pour la branche par défaut (main)
+
+      - name: Build and push Docker image to GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: . # Contexte de build (répertoire courant)
+          file: ./Dockerfile # Chemin vers le Dockerfile
+          push: true # Pousser l'image après le build
+          tags: ${{ steps.meta.outputs.tags }} # Tags générés par l'étape metadata-action
+          labels: ${{ steps.meta.outputs.labels }} # Labels générés
+          cache-from: type=gha # Utiliser le cache de GitHub Actions pour les couches Docker
+          cache-to: type=gha,mode=max
+
+
+  # --- Job: Deploy (Exemple Conceptuel) ---
+  # Ce job est un placeholder. Adaptez-le à votre stratégie de déploiement.
+  # deploy_to_staging:
+  #   name: Deploy to Staging
+  #   runs-on: ubuntu-latest
+  #   needs: package_docker_image
+  #   if: github.event_name == 'push' && github.ref == 'refs/heads/develop' # Déployer develop en staging
+  #   environment:
+  #     name: staging
+  #     url: http://staging.foo-api.example.com
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #
+  #     - name: Example Deployment script
+  #       env:
+  #         DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/foo-api:${{ github.sha }}
+  #         # STAGING_SERVER_IP: ${{ secrets.STAGING_SERVER_IP }}
+  #         # SSH_PRIVATE_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+  #       run: |
+  #         echo "Deploying image $DOCKER_IMAGE to Staging..."
+  #         # Votre script de déploiement ici (ex: ssh, kubectl apply, aws ecs update-service, etc.)
+  #         echo "Deployment to Staging finished."
