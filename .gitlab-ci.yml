@@ -1,0 +1,119 @@
+# .gitlab-ci.yml
+
+# Utiliser une image Docker de base pour les jobs qui n'en spécifient pas
+default:
+  image: maven:3.9-eclipse-temurin-24 # Image avec Maven et JDK 24
+
+variables:
+  # Variables globales
+  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=WARN -Dorg.slf4j.simpleLogger.showDateTime=true -Djava.awt.headless=true"
+  MAVEN_CLI_OPTS: "--batch-mode --errors --fail-at-end --show-version"
+  # Nom de l'image Docker. CI_REGISTRY_IMAGE est une variable GitLab CI prédéfinie.
+  # CI_COMMIT_REF_SLUG est le nom de la branche/tag nettoyé pour être utilisé dans une URL/nom d'image.
+  DOCKER_IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+  DOCKER_IMAGE_LATEST_TAG: $CI_REGISTRY_IMAGE:latest
+
+# Définition des étapes du pipeline
+stages:
+  - build
+  - test
+  - package # Construire l'image Docker
+  # - deploy # Étape de déploiement (exemple conceptuel)
+
+# Mise en cache des dépendances Maven pour accélérer les builds
+cache:
+  key:
+    files:
+      - pom.xml
+  paths:
+    - .m2/repository/
+
+# --- Étape: Build ---
+# Ce job compile le code et télécharge les dépendances.
+build_job:
+  stage: build
+  script:
+    - echo "Compiling the code..."
+    - ./mvnw $MAVEN_CLI_OPTS compile
+  artifacts:
+    paths:
+      - target/ # Sauvegarder le répertoire target pour les étapes suivantes si nécessaire
+    expire_in: 1 hour # Garder les artefacts pendant 1 heure
+
+# --- Étape: Test ---
+# Ce job exécute les tests unitaires et d'architecture.
+test_job:
+  stage: test
+  script:
+    - echo "Running tests..."
+    - ./mvnw $MAVEN_CLI_OPTS test # Exécute les TU, TI, ArchTest
+  artifacts:
+    when: always # Publier les rapports même si le job échoue
+    reports:
+      junit:
+        - target/surefire-reports/TEST-*.xml # Collecter les rapports de tests JUnit
+        - target/failsafe-reports/TEST-*.xml # Collecter les rapports de tests d'intégration (Failsafe)
+    paths:
+      - target/site/jacoco/ # Si Jacoco est configuré pour la couverture de code
+    expire_in: 1 day
+
+# --- Étape: Package (Build Docker Image) ---
+# Ce job construit l'image Docker et la pousse vers le GitLab Container Registry.
+package_job:
+  stage: package
+  image: docker:26.1 # Utiliser une image Docker pour construire des images Docker (Docker-in-Docker)
+  services:
+    - docker:26.1-dind # Nécessaire pour Docker-in-Docker
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs" # Recommandé pour Docker-in-Docker
+    # DOCKER_HOST: tcp://docker:2376 # Recommandé pour Docker-in-Docker
+    # DOCKER_DRIVER: overlay2
+  before_script:
+    # CI_REGISTRY_USER, CI_REGISTRY_PASSWORD, CI_REGISTRY sont des variables GitLab CI prédéfinies
+    - echo "Logging into GitLab Container Registry..."
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - echo "Building Docker image: $DOCKER_IMAGE_TAG"
+    - docker build -t "$DOCKER_IMAGE_TAG" .
+    - echo "Pushing Docker image to GitLab Container Registry: $DOCKER_IMAGE_TAG"
+    - docker push "$DOCKER_IMAGE_TAG"
+    # Optionnel: tagger et pousser également comme 'latest' pour la branche par défaut (ex: main/master)
+    - |
+      if [ "$CI_COMMIT_BRANCH" == "$CI_DEFAULT_BRANCH" ]; then
+        echo "Tagging and pushing latest image: $DOCKER_IMAGE_LATEST_TAG"
+        docker tag "$DOCKER_IMAGE_TAG" "$DOCKER_IMAGE_LATEST_TAG"
+        docker push "$DOCKER_IMAGE_LATEST_TAG"
+      fi
+  rules:
+    # Exécuter ce job uniquement pour les branches et les tags, mais pas pour les merge requests dupliquées
+    - if: '$CI_COMMIT_BRANCH || $CI_COMMIT_TAG'
+
+# --- Étape: Deploy (Exemple Conceptuel) ---
+# Décommentez et adaptez cette section pour vos besoins de déploiement.
+# deploy_to_staging:
+#   stage: deploy
+#   image: alpine # Ou une image avec kubectl, gcloud, aws-cli, sshpass etc.
+#   environment:
+#     name: staging
+#     url: http://staging.foo-api.example.com # URL de votre environnement de staging
+#   before_script:
+#     - echo "Preparing for deployment to Staging..."
+#     # - apk add --no-cache openssh-client # Exemple si déploiement via SSH
+#     # - eval $(ssh-agent -s)
+#     # - echo "$SSH_PRIVATE_KEY_STAGING" | tr -d '\r' | ssh-add -
+#     # - mkdir -p ~/.ssh
+#     # - chmod 700 ~/.ssh
+#     # - ssh-keyscan -H $STAGING_SERVER_IP >> ~/.ssh/known_hosts
+#     # - chmod 644 ~/.ssh/known_hosts
+#   script:
+#     - echo "Deploying $DOCKER_IMAGE_TAG to Staging environment..."
+#     # Exemple de script de déploiement (à remplacer par votre logique réelle)
+#     # - scp docker-compose.prod.yml user@$STAGING_SERVER_IP:/opt/foo-api/docker-compose.yml
+#     # - ssh user@$STAGING_SERVER_IP "cd /opt/foo-api && export APP_IMAGE_TAG=$DOCKER_IMAGE_TAG && docker-compose -f docker-compose.yml pull && docker-compose -f docker-compose.yml up -d --force-recreate foo-api-app"
+#     - echo "Deployment to Staging finished."
+#   rules:
+#     # Exécuter ce job uniquement lorsque des modifications sont poussées sur la branche 'develop' ou 'main'
+#     - if: '$CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"'
+#   variables:
+#     # STAGING_SERVER_IP: "your_staging_server_ip"
+#     # SSH_PRIVATE_KEY_STAGING: $YOUR_GITLAB_CI_VARIABLE_FOR_SSH_KEY

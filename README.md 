@@ -1,0 +1,79 @@
+# Foo API - Template Spring Boot 3 & Java 24
+
+# Ce projet est un template pour la création d'API REST avec Java 24, Spring Boot 3, et les bonnes pratiques modernes.
+# Il vise à fournir une base solide pour le développement d'applications robustes, testables et maintenables.
+
+## Prérequis
+
+# JDK 24 ou supérieur
+# Maven 3.9.x ou supérieur
+# Docker & Docker Compose (optionnel, pour lancer les dépendances comme la base de données)
+# Votre IDE préféré (IntelliJ IDEA, VS Code, Eclipse)
+
+## Build & Lancement
+
+# Build
+
+# Compiler le projet et exécuter les tests
+./mvnw clean install
+
+# Compiler sans exécuter les tests
+./mvnw clean package -DskipTests
+
+# Lancement
+
+# Lancer le JAR exécutable (après build)
+java -jar target/foo-api-0.0.1-SNAPSHOT.jar
+
+# Lancer avec un profil Spring spécifique
+java -jar target/foo-api-0.0.1-SNAPSHOT.jar --spring.profiles.active=dev
+
+# Avec Docker Compose (exemple)
+
+# Construire et lancer l'application avec ses dépendances (ex: base de données)
+docker-compose up --build
+
+## Tests
+
+# Exécuter tous les tests
+./mvnw test
+
+# Exécuter un test unitaire spécifique
+./mvnw test -Dtest=com.example.fooapi.service.FooServiceTest
+
+# Exécuter un test d'intégration spécifique
+./mvnw test -Dit.test=com.example.fooapi.controller.FooControllerIT
+
+## Documentation API (Swagger)
+
+# Une fois l'application lancée, la documentation OpenAPI (Swagger UI) est accessible à l'adresse suivante :
+
+# Swagger UI: http://localhost:8080/swagger-ui.html
+# OpenAPI Spec (JSON): http://localhost:8080/api-docs
+
+## Sécurité
+
+# La sécurité est gérée par Spring Security. Les aspects clés incluent :
+
+# Authentification JWT (exemple à implémenter complètement).
+# Hashing des mots de passe avec BCrypt.
+# Autorisation basée sur les rôles/permissions.
+# Protection contre les vulnérabilités courantes (XSS, CSRF avec précautions pour les API stateless).
+# Configuration CORS si nécessaire.
+
+# Consultez src/main/java/com/example/fooapi/config/SecurityConfig.java pour la configuration de base.
+
+## Logging
+
+# La journalisation est configurée via SLF4J avec Logback. La configuration se trouve dans src/main/resources/logback-spring.xml.
+# Les logs sont écrits sur la console et dans un fichier (logs/foo-api.log par défaut).
+
+## Autres Bonnes Pratiques Implémentées
+
+# Gestion centralisée des exceptions (GlobalExceptionHandler).
+# Validation des DTOs avec Bean Validation (jakarta.validation).
+# Mapping Entité/DTO avec MapStruct.
+# Structure en couches (Controller, Service, Repository).
+# Utilisation de Lombok pour réduire le code boilerplate.
+# Préparation pour la conteneurisation avec Dockerfile.
+# Endpoints Actuator pour le monitoring (ex: /actuator/health).

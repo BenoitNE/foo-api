@@ -1,0 +1,53 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  # Service de l'application Foo API
+  foo-api:
+    build:
+      context: . # Construit l'image à partir du Dockerfile dans le répertoire courant
+      dockerfile: Dockerfile
+    container_name: foo-api-app
+    ports:
+      - "8080:8080" # Mappe le port 8080 du conteneur au port 8080 de l'hôte
+    environment:
+      # Configuration pour se connecter à la base de données PostgreSQL
+      # Ces variables doivent correspondre à celles attendues par votre application.properties
+      - SPRING_PROFILES_ACTIVE=docker # Utiliser un profil Spring spécifique à Docker si nécessaire
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://foo-db:5432/foodb
+      - SPRING_DATASOURCE_USERNAME=foouser
+      - SPRING_DATASOURCE_PASSWORD=foopassword
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=update # Ou 'validate' si vous utilisez Flyway/Liquibase en prod
+      # Autres variables d'environnement nécessaires pour l'API
+    depends_on:
+      foo-db: # S'assurer que le service de base de données démarre avant l'API
+        condition: service_healthy # Attend que le service foo-db soit "healthy"
+    networks:
+      - foo-network
+
+  # Service de la base de données PostgreSQL
+  foo-db:
+    image: postgres:15-alpine # Utiliser une image PostgreSQL
+    container_name: foo-db-postgres
+    environment:
+      - POSTGRES_USER=foouser
+      - POSTGRES_PASSWORD=foopassword
+      - POSTGRES_DB=foodb
+    ports:
+      - "5432:5432" # Optionnel: mapper le port de la DB à l'hôte pour un accès direct
+    volumes:
+      - foo_db_data:/var/lib/postgresql/data # Persistance des données de la base de données
+    healthcheck: # Vérifie que la base de données est prête à accepter des connexions
+      test: ["CMD-SHELL", "pg_isready -U foouser -d foodb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - foo-network
+
+volumes:
+  foo_db_data: # Volume nommé pour la persistance des données PostgreSQL
+
+networks:
+  foo-network: # Réseau personnalisé pour la communication entre services
+    driver: bridge
